@@ -38,4 +38,7 @@
 
 #define OLED_SET_DISPLAY_ON         0xAF // Initialize DC-DC then use this command to turn on the display
 
+/*  Function Proto  */
+void sh1106_clear_oled(void);
+
 #endif
