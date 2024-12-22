@@ -2,6 +2,7 @@
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/i2c.h>
+#include <linux/i2c-smbus.h>
 #include <linux/kernel.h>
 #include <linux/delay.h>
 #include <linux/err.h>
@@ -14,8 +15,12 @@
 
 #define OK                              0U
 
+/*  Initialize the display buffer depending upon the display ht and wdt */
+static char display_buffer[BUFFER_SIZE];
+// display_buffer[0] = (unsigned char)OLED_CNT_BYTE_DATA_STREAM;
+
 /*  display initialization commands */
-unsigned char display_off_cmd[]     = {OLED_CNT_BYTE_CMD_STREAM, OLED_SET_DISPLAY_OFF};
+unsigned char display_off_cmd[] = {OLED_CNT_BYTE_CMD_STREAM, OLED_SET_DISPLAY_OFF};
 unsigned char clk_div_cmd[]         = {OLED_CNT_BYTE_CMD_STREAM, OLED_SET_DISPLAY_CLK_DIV, 0x80};
 unsigned char multiplex_ratio[]     = {OLED_CNT_BYTE_CMD_STREAM, OLED_SET_MULTIPLEX_RATIO, 0x3F};
 unsigned char display_offset[]      = {OLED_CNT_BYTE_CMD_STREAM, OLED_SET_DISPLAY_OFFSET, 0x00};
@@ -32,6 +37,7 @@ unsigned char unknown_cmd_3[]       = {OLED_CNT_BYTE_CMD_STREAM, 0x2E};
 unsigned char display_style[]       = {OLED_CNT_BYTE_CMD_STREAM, OLED_SET_ENT_DISPLAY_RAM};
 unsigned char display_style1[]      = {OLED_CNT_BYTE_CMD_STREAM, OLED_SET_DISPLAY_NORMAL};
 unsigned char setpage[]             = {OLED_CNT_BYTE_CMD_STREAM, 0x10, 0x2, OLED_SET_PAGE_ADR};
+unsigned char display_on_cmd[]      = {OLED_CNT_BYTE_CMD_STREAM, OLED_SET_DISPLAY_ON};
 
 /*  declare and define a adapter structure to which the device will be connected on */
 static struct i2c_adapter *oled_i2c_adap = NULL;
@@ -42,6 +48,7 @@ static struct i2c_client *oled_i2c_client = NULL;
  */
 static int sh1106_write(const unsigned char *buf, int size)
 {
+    msleep(50);
     int xRet = OK;
 
     if(!oled_i2c_client){
@@ -86,6 +93,149 @@ err_dump:
     return xRet;
 }
 
+static int sh1106_clear_oled(void)
+{
+    msleep(10);
+    int xRet = OK;
+
+    /*  Create the buffer to tx the 0s  */
+    uint8_t buff_fill_zeros[25] = {0};
+    buff_fill_zeros[0] = OLED_CNT_BYTE_DATA_STREAM;
+
+    uint8_t total_seg_batch = 6;
+    uint8_t count = 0;
+    for (uint8_t page_start = 0; page_start < 8; page_start++)
+    {
+        setpage[3] = OLED_SET_PAGE_ADR + count++;
+
+        xRet = sh1106_write(display_start_line, sizeof(display_start_line));
+        if(xRet < 0){
+            pr_err("%s: error in clearing the display, error code = %d!\n", CLIENT_NAME, xRet);
+            goto err_dump;
+        }
+
+        xRet = sh1106_write(setpage, sizeof(setpage));
+        if(xRet < 0){
+            pr_err("%s: error in clearing the display, error code = %d!\n", CLIENT_NAME, xRet);
+            goto err_dump;
+        }
+
+        for (uint8_t seg_batch = 1; seg_batch <= total_seg_batch; seg_batch++){
+            uint8_t seg_count;
+            if(seg_batch == 6){
+                seg_count = 9;
+            }
+            else{
+                seg_count = 25;
+            }
+
+            xRet = sh1106_write(buff_fill_zeros, seg_count);
+            if (xRet < 0){
+                pr_err("%s: error in clearing the display, error code = %d!\n", CLIENT_NAME, xRet);
+                goto err_dump;
+            }
+
+            //msleep(5);
+        }
+        //msleep(5);
+    }
+
+    return 0;
+
+    err_dump:
+        return xRet;
+}
+
+static int sh1106_oled_draw_pixed(int x_pos, int y_pos, bool status){
+    int xRet = OK;
+
+    /*  Check for the appropriate x and y cordinates    */
+    if(x_pos < 0 || x_pos > SH1106_WIDTH){
+        pr_err("%s: wrong x coordinates!\n", CLIENT_NAME);
+        goto err_dump;
+    }
+    if(y_pos < 0 || y_pos > SH1106_HEIGHT){
+        pr_err("%s: wrong y coordinates!\n", CLIENT_NAME);
+        goto err_dump;
+    }
+
+    int page = y_pos / SH1106_PAGES;
+    int y_bit_pos = y_pos % SH1106_PAGES;
+
+    /*  index of the 1024 byte buffer depending upon x and y coordinate */
+    int byte_index = x_pos + (page * SH1106_WIDTH);
+
+    pr_info("Drawing pixel at byte_index=%d, page=%d, y_bit_pos=%d\n", byte_index, page, y_bit_pos);
+
+    /*  Depending upon the status turn on or off the pixel  */
+    if(status){
+        /*  Turn on the display */
+        display_buffer[byte_index] |= (1 << y_bit_pos);
+    }
+    else{
+        /*  Turn off the display    */
+        display_buffer[byte_index] &= ~(1 << y_bit_pos);
+    }
+
+    xRet = update_display();
+
+    return 0;
+
+    err_dump:
+        return -EFAULT;
+}
+
+int update_display(void){
+
+#define OLED_UPDATE_CHUNK_SIZE          32 // Parameterized chunk size
+#define OLED_UPDATE_BUFFER_SIZE         (OLED_UPDATE_CHUNK_SIZE + 1)
+
+    int xRet = OK;
+    uint8_t page_lookup = 0, page_addr_count = 0;
+
+    uint8_t update_buffer[OLED_UPDATE_BUFFER_SIZE] = {0};
+    update_buffer[0] = OLED_CNT_BYTE_DATA_STREAM;
+
+    /* Iterate through the display buffer in chunks */
+    for (uint16_t count = 0; count < 1024; count += OLED_UPDATE_CHUNK_SIZE){
+        
+        if ((page_lookup == 0) || ((page_lookup % 4) == 0)){
+            setpage[3] = OLED_SET_PAGE_ADR + page_addr_count++;
+
+            xRet = sh1106_write(display_start_line, sizeof(display_start_line));
+            if (xRet < 0){
+                pr_err("%s: error in updating the display, error code = %d!\n", CLIENT_NAME, xRet);
+                goto err_dump;
+            }
+
+            xRet = sh1106_write(setpage, sizeof(setpage));
+            if (xRet < 0){
+                pr_err("%s: error in updating the display, error code = %d!\n", CLIENT_NAME, xRet);
+                goto err_dump;
+            }
+        }
+        
+        /* Copy the next chunk of data into the update buffer */
+        memcpy(&update_buffer[1], &display_buffer[count], OLED_UPDATE_CHUNK_SIZE);
+
+        /* Send the chunk over I2C */
+        xRet = sh1106_write(update_buffer, OLED_UPDATE_BUFFER_SIZE);
+
+        if (xRet < 0){
+            pr_err("%s: Error updating display at chunk %d!\n", CLIENT_NAME, count / OLED_UPDATE_CHUNK_SIZE);
+            return xRet;
+        }
+
+        pr_info("Chunk sent: %*ph\n", OLED_UPDATE_CHUNK_SIZE, &update_buffer[1]);
+        page_lookup++;
+
+    }
+
+    return OK;
+
+    err_dump:
+        return xRet;
+}
 /*********************************************************************************************/
 /**
 *  Will be invoked if the client device is found on the desired i2c bus
@@ -95,10 +245,28 @@ static int oled_probe(struct i2c_client * client){
     int xRet = OK;
 
     /*  Initialize the display  */
-    if ((xRet = SSH1106_display_init())){
+    xRet = SSH1106_display_init();
+    if (xRet < 0){
         pr_err("%s: error in initializing the sh1106 display!\n", CLIENT_NAME);
         goto dump_error;
     }
+
+    /*  Clear the display   */
+    sh1106_clear_oled();
+    pr_info("%s: Cleared the display GDDRAM!\n", CLIENT_NAME);
+
+    /*  Turn a pixel on */
+    xRet = sh1106_oled_draw_pixed(64, 32, true);
+    if(xRet < 0){
+        pr_err("%s: unable to turn on the pixel!\n", CLIENT_NAME);
+        goto dump_error;
+    }
+    pr_info("%s: turned on/off the pixel at (%d, %d)!\n", CLIENT_NAME, 64, 32);
+
+    /*  Turn on the display */
+    sh1106_write(display_on_cmd, sizeof(display_on_cmd));
+    pr_info("%s: Turned on the display!\n", CLIENT_NAME);
+
     pr_info("%s: probed!\n", CLIENT_NAME);
     return 0;
 
@@ -107,7 +275,8 @@ static int oled_probe(struct i2c_client * client){
 }
 
 static void oled_remove(struct i2c_client *client){
-    /*  Apply a mechanism to control something on the oled display before getting removed   */
+/*  Apply a mechanism to control something on the oled display before getting removed   */
+    sh1106_write(display_off_cmd, sizeof(display_off_cmd));
 
     pr_info("%s: removed!\n", CLIENT_NAME);
 }
@@ -133,7 +302,8 @@ static struct i2c_driver oled_driver = {
 
 /*  Specify board info to get the i2c_client    */
 static struct i2c_board_info oled_i2c_board_info = {
-        I2C_BOARD_INFO(CLIENT_NAME, SSH1306_OLED_ADR)
+        I2C_BOARD_INFO(CLIENT_NAME, SSH1306_OLED_ADR),
+        .platform_data = (void *)400000,
 };
 
 /*********************************************************************************************/
@@ -148,7 +318,6 @@ static int __init oled_driver_init(void){
         goto err_dump;
     }
 
-    
     oled_i2c_client = i2c_new_client_device(oled_i2c_adap, &oled_i2c_board_info);
     if(!oled_i2c_client){
         pr_err("%s: Failed to register the i2c_client!\n", CLIENT_NAME);
@@ -159,7 +328,7 @@ static int __init oled_driver_init(void){
 
     i2c_add_driver(&oled_driver);
 
-    pr_info("%s: Driver added!\n", CLIENT_NAME);
+    pr_info("\033[1;32mGreen text: Display updated successfully\033[0m\n");
     return 0;
 
     err_dump:
