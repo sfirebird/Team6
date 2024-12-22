@@ -5,6 +5,13 @@
 /*  Include linux related header files  */
 #endif /*   LINUX   */
 
+#define SH1106_WIDTH                128U
+#define SH1106_HEIGHT               64U
+
+#define SH1106_PAGES                8U
+
+#define BUFFER_SIZE                 (SH1106_WIDTH * (SH1106_HEIGHT / 8))
+
 /* Refer Protocol Section on PgNo. 13 of the datasheet  */
 #define OLED_CNT_BYTE_CMD_SINGLE    0x80  //  Co = 1, D/C = 0, (1000 0000)b
 #define OLED_CNT_BYTE_CMD_STREAM    0x00  //  Co = 0, D/C = 0, (0000 0000)b
@@ -39,6 +46,7 @@
 #define OLED_SET_DISPLAY_ON         0xAF // Initialize DC-DC then use this command to turn on the display
 
 /*  Function Proto  */
-void sh1106_clear_oled(void);
+static int sh1106_clear_oled(void);
+static int update_display(void);
 
 #endif
