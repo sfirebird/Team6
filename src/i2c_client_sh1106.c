@@ -7,6 +7,11 @@
 #include <linux/delay.h>
 #include <linux/err.h>
 
+/*  File Operations and character device    */
+#include <linux/fs.h>
+#include <linux/device.h>
+#include <linux/uaccess.h>
+
 #include "../inc/sh1106.h"
 
 #define AVAILABLE_RPI_I2C_BUS           1U
@@ -15,9 +20,15 @@
 
 #define OK                              0U
 
+#define CLASS_NAME                      "OLED"
+
+/*  Major and minor number for exposing the driver to the userspace */
+static int major_number;
+
+struct cdev *dev;
+
 /*  Initialize the display buffer depending upon the display ht and wdt */
 static char display_buffer[BUFFER_SIZE];
-// display_buffer[0] = (unsigned char)OLED_CNT_BYTE_DATA_STREAM;
 
 /*  display initialization commands */
 unsigned char display_off_cmd[] = {OLED_CNT_BYTE_CMD_STREAM, OLED_SET_DISPLAY_OFF};
@@ -42,6 +53,14 @@ unsigned char display_on_cmd[]      = {OLED_CNT_BYTE_CMD_STREAM, OLED_SET_DISPLA
 /*  declare and define a adapter structure to which the device will be connected on */
 static struct i2c_adapter *oled_i2c_adap = NULL;
 static struct i2c_client *oled_i2c_client = NULL;
+
+/*  Dynamic node creation   */
+static struct class *oled_class;
+static struct device *oled_device;
+
+/* IOCTL Commands defined */
+#define CLEAR_SH1106    _IO('a', 1)  // Command to clear the SH1106 display
+#define DRAW_PIXEL      _IO('a', 2)   // Command to draw a pixel on the SH1106 display
 
 /**
  *  Write message to the i2c_bus, takes a pointer to the char data type.
@@ -236,6 +255,45 @@ int update_display(void){
     err_dump:
         return xRet;
 }
+
+/********************************************************************************************
+ *  Exposing the fops to userspace so that the user can control the display using the file operations
+*/
+static int oled_open_from_up(struct inode *pInode, struct file *pFile){
+    pr_info("%s: opened!\n", CLIENT_NAME);
+    return 0;
+}
+
+static int oled_release_from_up(struct inode *pInode, struct file *pFile){
+    pr_info("%s: closed!\n", CLIENT_NAME);
+    return 0;
+}
+
+static long oled_ioctl_up(struct file *pFile, unsigned int cmd, unsigned long arg){
+    switch(cmd){
+        case CLEAR_SH1106:{
+            pr_info("%s: Inside clear_sh1006 ioctl!\n", CLIENT_NAME);
+            break;
+        }
+        case DRAW_PIXEL:{
+            pr_info("%s: Inside draw_pixel ioctl!\n", CLIENT_NAME);
+            break;
+        }
+    }
+
+    return 0;
+}
+
+/*  Declare and initialize the fops with custom functions    */
+static struct file_operations fops_on_oled = {
+    .owner = THIS_MODULE,
+    .open = oled_open_from_up,
+    .release = oled_release_from_up,
+    .unlocked_ioctl = oled_ioctl_up,
+};
+
+
+
 /*********************************************************************************************/
 /**
 *  Will be invoked if the client device is found on the desired i2c bus
@@ -303,6 +361,7 @@ static struct i2c_driver oled_driver = {
 /*  Specify board info to get the i2c_client    */
 static struct i2c_board_info oled_i2c_board_info = {
         I2C_BOARD_INFO(CLIENT_NAME, SSH1306_OLED_ADR),
+        /*  SCL Frequency for the slave/client */
         .platform_data = (void *)400000,
 };
 
@@ -328,7 +387,36 @@ static int __init oled_driver_init(void){
 
     i2c_add_driver(&oled_driver);
 
-    pr_info("\033[1;32mGreen text: Display updated successfully\033[0m\n");
+    /*  Fops related registration
+        Registeration of the driver as a character device
+    */
+
+    major_number = register_chrdev(0, CLIENT_NAME, &fops_on_oled);
+    if(major_number < 0){
+        pr_err("%s: Failed to register, error_code = %d", CLIENT_NAME, major_number);
+        return major_number;
+    }
+
+    /*  Create a class for the device 
+    oled_class = class_create(CLASS_NAME);
+    if(IS_ERR(oled_class)){
+        pr_err("%s: Failed to create the class!\n", CLIENT_NAME);
+        unregister_chrdev(major_number, CLIENT_NAME);
+        return PTR_ERR(oled_class);
+    }
+    */
+
+    /*  Create a device
+    oled_device = device_create(oled_class, NULL, MKDEV(major_number, 0), NULL, CLIENT_NAME);
+    if(IS_ERR(oled_device)){
+        pr_err("%s: Failed to create the device!\n", CLIENT_NAME);
+        class_destroy(oled_class);
+        unregister_chrdev(major_number, CLIENT_NAME);
+        return PTR_ERR(oled_device);
+    }
+    */
+    
+    pr_info("%s: Driver initialized and loaded!\n", CLIENT_NAME);
     return 0;
 
     err_dump:
@@ -339,6 +427,13 @@ static int __init oled_driver_init(void){
 static void __exit oled_driver_exit(void){
     i2c_unregister_device(oled_i2c_client);
     i2c_del_driver(&oled_driver);
+
+    /* Fops related unregistration
+    device_destroy(oled_class, MKDEV(major_number, 0));
+    class_destroy(oled_class);
+    unregister_chrdev(major_number, CLIENT_NAME);
+    */
+
     pr_info("Driver Removed!\n");
 }
 /*********************************************************************************************/
