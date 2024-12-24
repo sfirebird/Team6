@@ -389,13 +389,13 @@ static int __init oled_driver_init(void){
 
     /*  Fops related registration
         Registeration of the driver as a character device
-    */
 
     major_number = register_chrdev(0, CLIENT_NAME, &fops_on_oled);
     if(major_number < 0){
         pr_err("%s: Failed to register, error_code = %d", CLIENT_NAME, major_number);
         return major_number;
     }
+    */
 
     /*  Create a class for the device 
     oled_class = class_create(CLASS_NAME);
