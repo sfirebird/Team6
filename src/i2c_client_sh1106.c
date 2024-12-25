@@ -25,7 +25,8 @@
 /*  Major and minor number for exposing the driver to the userspace */
 static int major_number;
 
-struct cdev *dev;
+/*  Will be used to register the fops to the cdev, will be further added to the dev */
+static struct cdev *oled_cdev = NULL;
 
 /*  Initialize the display buffer depending upon the display ht and wdt */
 static char display_buffer[BUFFER_SIZE];
@@ -387,15 +388,25 @@ static int __init oled_driver_init(void){
 
     i2c_add_driver(&oled_driver);
 
+    /*  Get the pointer to the cdev structure   */
+    oled_cdev = cdev_alloc();
+
+    /*  Initialize the cdev with fops   */
+    cdev_init(oled_cdev, &fops_on_oled);
+
+    
+
+
     /*  Fops related registration
         Registeration of the driver as a character device
-
+    
     major_number = register_chrdev(0, CLIENT_NAME, &fops_on_oled);
     if(major_number < 0){
         pr_err("%s: Failed to register, error_code = %d", CLIENT_NAME, major_number);
         return major_number;
     }
     */
+
 
     /*  Create a class for the device 
     oled_class = class_create(CLASS_NAME);
