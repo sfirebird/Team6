@@ -55,13 +55,15 @@ unsigned char display_on_cmd[]      = {OLED_CNT_BYTE_CMD_STREAM, OLED_SET_DISPLA
 static struct i2c_adapter *oled_i2c_adap = NULL;
 static struct i2c_client *oled_i2c_client = NULL;
 
-/*  Dynamic node creation   */
+/*  Dynamic node creation   
 static struct class *oled_class;
 static struct device *oled_device;
+*/
 
-/* IOCTL Commands defined */
+/* IOCTL Commands defined
 #define CLEAR_SH1106    _IO('a', 1)  // Command to clear the SH1106 display
 #define DRAW_PIXEL      _IO('a', 2)   // Command to draw a pixel on the SH1106 display
+*/
 
 /**
  *  Write message to the i2c_bus, takes a pointer to the char data type.
@@ -259,7 +261,7 @@ int update_display(void){
 
 /********************************************************************************************
  *  Exposing the fops to userspace so that the user can control the display using the file operations
-*/
+ * 
 static int oled_open_from_up(struct inode *pInode, struct file *pFile){
     pr_info("%s: opened!\n", CLIENT_NAME);
     return 0;
@@ -284,14 +286,16 @@ static long oled_ioctl_up(struct file *pFile, unsigned int cmd, unsigned long ar
 
     return 0;
 }
+*/
 
-/*  Declare and initialize the fops with custom functions    */
+/*  Declare and initialize the fops with custom functions    
 static struct file_operations fops_on_oled = {
     .owner = THIS_MODULE,
     .open = oled_open_from_up,
     .release = oled_release_from_up,
     .unlocked_ioctl = oled_ioctl_up,
 };
+*/
 
 
 
