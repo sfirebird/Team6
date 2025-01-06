@@ -47,6 +47,6 @@
 
 /*  Function Proto  */
 static int sh1106_clear_oled(void);
-static int update_display(void);
+static int update_display(const unsigned char *free_buffer);
 
 #endif
