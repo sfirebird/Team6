@@ -6,3 +6,5 @@
 *.cmd
 Module.symvers
 modules.order
+*.ko
+*.o
